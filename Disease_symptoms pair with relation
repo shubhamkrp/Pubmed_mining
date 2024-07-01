@@ -1,0 +1,109 @@
+import os
+import re
+import spacy
+from negspacy.negation import Negex
+from negspacy.termsets import termset
+
+# Load SpaCy model
+nlp = spacy.load("en_core_web_sm")
+
+# Initialize Negex with the required arguments
+ts = termset("en_clinical")  # or "en" if not using clinical terms
+#negex = Negex(
+ #   nlp=nlp,
+  #  name='negex',
+   # neg_termset=neg_termset,
+    #ent_types=["PERSON", "ORG", "GPE", "LOC", "PRODUCT", "EVENT", "WORK_OF_ART", "LAW", "LANGUAGE", "DATE", "TIME", "PERCENT", "MONEY", "QUANTITY", "ORDINAL", "CARDINAL"],
+    #extension_name='negex',
+    #chunk_prefix=False
+#)
+
+# Add Negex to the pipeline
+nlp.add_pipe(
+    "negex",
+    config = {
+        "neg_termset":ts.get_patterns()
+    }
+)
+
+def load_symptom_disease_pairs(file_path):
+    pairs = []
+    with open(file_path, 'r') as file:
+        for line in file:
+            # Split each line by '|' to get the symptom and disease
+            symptom, disease = line.strip().split('|')
+            pairs.append((symptom.strip(), disease.strip()))
+    return pairs
+
+def preprocess_text(text):
+    # Lowercase the text
+    text = text.lower()
+    # Remove punctuation
+    text = re.sub(r'[^\w\s]', '', text)
+    return text
+
+def determine_relationship(line, symptom, disease):
+    # Use negex to determine the relationship
+    doc = nlp(line)
+    
+    relationship = "positive"
+    for entity in doc.ents:
+        if entity.text == symptom or entity.text == disease:
+            if entity._.negex:
+                relationship = "negative"
+                break
+                
+    return relationship
+
+def find_pairs_in_text(pairs, text):
+    found_pairs = []
+    lines = text.split('\n')
+    
+    # Iterate over each line in the text
+    for line in lines:
+        # Preprocess the line
+        preprocessed_line = preprocess_text(line)
+        # Iterate over each pair
+        for symptom, disease in pairs:
+            # Check if both the symptom and disease are present in the line
+            if symptom in preprocessed_line and disease in preprocessed_line:
+                relationship = determine_relationship(preprocessed_line, symptom, disease)
+                found_pairs.append((symptom, disease, relationship))
+    
+    return found_pairs
+
+def process_files(directory_path, pairs):
+    results = {}
+    
+    # Iterate over each file in the directory
+    for file_name in os.listdir(directory_path):
+        file_path = os.path.join(directory_path, file_name)
+        
+        # Check if the file is a text file
+        if os.path.isfile(file_path) and file_path.endswith('.txt'):
+            with open(file_path, 'r') as file:
+                text = file.read()
+                found_pairs = find_pairs_in_text(pairs, text)
+                results[file_path] = found_pairs
+            
+    return results
+
+# Example usage
+symptom_disease_file = 'symptom_disease_pairs.txt'  # Replace with the path to your symptom-disease pairs file
+directory_path = 'abs'  # Replace with the path to your directory containing text files
+
+# Load the pairs from the file
+pairs = load_symptom_disease_pairs(symptom_disease_file)
+
+# Process each text file in the directory and find pairs
+results = process_files(directory_path, pairs)
+
+# Output the results
+for file_path, found_pairs in results.items():
+    print(f"\nIn file {file_path}:")
+    if found_pairs:
+        print("Found the following symptom-disease pairs:")
+        for symptom, disease, relationship in found_pairs:
+            print(f"Symptom: {symptom}, Disease: {disease}, Relationship: {relationship}")
+    else:
+        print("No symptom-disease pairs found.")
